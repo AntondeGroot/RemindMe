@@ -1,6 +1,7 @@
 package nl.local.remindme
 
 import android.content.Context
+import android.content.SharedPreferences
 import org.json.JSONArray
 import org.json.JSONObject
 import java.time.LocalDate
@@ -14,11 +15,13 @@ object Store {
     @Volatile
     private var cached: Config? = null
 
+    /** The app's one preferences file, shared with whatever else needs a scrap of state. */
+    fun prefs(context: Context): SharedPreferences =
+        context.applicationContext.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+
     fun load(context: Context): Config {
         cached?.let { return it }
-        val raw = context.applicationContext
-            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getString(KEY, null)
+        val raw = prefs(context).getString(KEY, null)
         val config = if (raw.isNullOrBlank()) Defaults.config else runCatching { decode(raw) }
             .getOrDefault(Defaults.config)
         cached = config
@@ -28,11 +31,7 @@ object Store {
     fun save(context: Context, config: Config) {
         val pruned = config.copy(overrides = prune(config.overrides))
         cached = pruned
-        context.applicationContext
-            .getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .edit()
-            .putString(KEY, encode(pruned))
-            .apply()
+        prefs(context).edit().putString(KEY, encode(pruned)).apply()
     }
 
     /** Drop one-off day types older than yesterday so the blob cannot grow forever. */
