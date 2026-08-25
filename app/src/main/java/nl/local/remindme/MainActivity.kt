@@ -224,7 +224,7 @@ private fun MainScreen(
                         fontFamily = FontFamily.Monospace
                     )
                     Spacer(Modifier.height(6.dp))
-                    Text("${next.second.emoji}  ${next.second.title}", fontSize = 15.sp, color = Chalk)
+                    Text(next.second.headline(), fontSize = 15.sp, color = Chalk)
                     Spacer(Modifier.height(4.dp))
                     Text("${remaining.size} more today", fontSize = 12.sp, color = Mist)
                 } else {
@@ -245,7 +245,8 @@ private fun MainScreen(
                 Label(
                     "Today is " + today.dayOfWeek
                         .getDisplayName(TextStyle.FULL, Locale.getDefault())
-                        .lowercase(Locale.getDefault())
+                        .lowercase(Locale.getDefault()) +
+                        " · week ${isoWeek(today)}"
                 )
                 if (config.overrides.containsKey(today.toString())) {
                     Spacer(Modifier.width(10.dp))
@@ -260,7 +261,7 @@ private fun MainScreen(
                 }
             }
             Spacer(Modifier.height(10.dp))
-            Segmented(selected = dayType) { picked ->
+            Segmented(DayType.entries, dayType, { it.label }) { picked ->
                 onCommit(config.copy(overrides = config.overrides + (today.toString() to picked)))
             }
             Spacer(Modifier.height(8.dp))
@@ -271,7 +272,7 @@ private fun MainScreen(
             Label("Reminders")
             Spacer(Modifier.height(10.dp))
             config.reminders.forEach { reminder ->
-                ReminderCard(reminder, dayType, minuteNow) { onEdit(reminder) }
+                ReminderCard(reminder, dayType, today, minuteNow) { onEdit(reminder) }
                 Spacer(Modifier.height(8.dp))
             }
         }
@@ -306,10 +307,12 @@ private fun MainScreen(
 private fun ReminderCard(
     reminder: Reminder,
     dayType: DayType,
+    today: LocalDate,
     minuteNow: Int,
     onClick: () -> Unit
 ) {
-    val times = reminder.timesFor(dayType)
+    val times = reminder.timesOn(today, dayType)
+    val onSpecificDay = reminder.specific.covers(today)
 
     Surface(
         color = Slab,
@@ -322,8 +325,10 @@ private fun ReminderCard(
     ) {
         Column(Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(reminder.emoji, fontSize = 17.sp)
-                Spacer(Modifier.width(10.dp))
+                if (reminder.emoji.isNotBlank()) {
+                    Text(reminder.emoji, fontSize = 17.sp)
+                    Spacer(Modifier.width(10.dp))
+                }
                 Text(
                     reminder.title,
                     fontSize = 15.sp,
@@ -356,6 +361,17 @@ private fun ReminderCard(
                             .padding(horizontal = 7.dp, vertical = 3.dp)
                     )
                 }
+            }
+
+            // The times above are one day's worth; this says which days differ.
+            if (reminder.active && reminder.specific.isSet()) {
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    (if (onSpecificDay) "Includes the extra times for " else "Extra times on ") +
+                        patternSummary(reminder.specific),
+                    fontSize = 11.sp,
+                    color = Faded
+                )
             }
         }
     }
@@ -474,7 +490,7 @@ private fun WeekScreen(config: Config, onCommit: (Config) -> Unit, onBack: () ->
                 color = Chalk
             )
             Spacer(Modifier.height(6.dp))
-            Segmented(selected = config.week[day] ?: DayType.HOME) { picked ->
+            Segmented(DayType.entries, config.week[day] ?: DayType.HOME, { it.label }) { picked ->
                 onCommit(config.copy(week = config.week + (day to picked)))
             }
             Spacer(Modifier.height(14.dp))
@@ -497,6 +513,21 @@ private fun WeekScreen(config: Config, onCommit: (Config) -> Unit, onBack: () ->
 
 private val EMOJIS = listOf("💧", "📓", "🐈", "🧺", "💊", "🧘", "🚶", "📞", "🌱", "🦷", "☀️", "🔔")
 
+/** Room for one emoji, including the multi-character ones like 👨‍👩‍👧 and ☀️. */
+private const val MAX_EMOJI_LENGTH = 12
+
+/** Says in one line what the specific-days section will do as it currently stands. */
+private fun specificDaysHint(specific: SpecificDays): String {
+    if (!specific.isSet()) {
+        return "Nothing picked, so this one follows the home, office and off times all week."
+    }
+    if (specific.times.isEmpty()) {
+        return "${patternSummary(specific)} would add nothing — add a time, or unpick the days."
+    }
+    return "On ${patternSummary(specific)} these fire on top of the times above. " +
+        "This week is week ${isoWeek(LocalDate.now())}."
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditScreen(
@@ -509,6 +540,7 @@ private fun EditScreen(
     var title by remember { mutableStateOf(original?.title ?: "") }
     var emoji by remember { mutableStateOf(original?.emoji ?: "💧") }
     var active by remember { mutableStateOf(original?.active ?: true) }
+    var specific by remember { mutableStateOf(original?.specific ?: SpecificDays()) }
     var times by remember {
         mutableStateOf(DayType.entries.associateWith { original?.timesFor(it).orEmpty() })
     }
@@ -517,11 +549,11 @@ private fun EditScreen(
         times = times + (type to values.distinct().sorted())
     }
 
-    fun pickTime(type: DayType) {
+    fun pickTime(onPicked: (Int) -> Unit) {
         val hourNow = LocalDateTime.now().hour
         TimePickerDialog(
             context,
-            { _, hour, minute -> put(type, times[type].orEmpty() + (hour * 60 + minute)) },
+            { _, hour, minute -> onPicked(hour * 60 + minute) },
             hourNow,
             0,
             true
@@ -540,23 +572,11 @@ private fun EditScreen(
 
         Label("The message you'll see")
         Spacer(Modifier.height(8.dp))
-        OutlinedTextField(
+        InputField(
             value = title,
-            onValueChange = { title = it },
-            placeholder = { Text("Drink a glass of water", color = Faded) },
-            singleLine = true,
-            shape = RoundedCornerShape(11.dp),
-            modifier = Modifier.fillMaxWidth(),
-            colors = OutlinedTextFieldDefaults.colors(
-                focusedContainerColor = Slab,
-                unfocusedContainerColor = Slab,
-                focusedBorderColor = Amber,
-                unfocusedBorderColor = Edge,
-                focusedTextColor = Chalk,
-                unfocusedTextColor = Chalk,
-                cursorColor = Amber
-            )
-        )
+            placeholder = "Drink a glass of water",
+            modifier = Modifier.fillMaxWidth()
+        ) { title = it }
 
         Spacer(Modifier.height(20.dp))
         Label("Icon")
@@ -570,8 +590,31 @@ private fun EditScreen(
                     .clip(RoundedCornerShape(10.dp))
                     .background(if (on) Chip else Slab)
                     .border(1.dp, if (on) Chalk else Edge, RoundedCornerShape(10.dp))
-                    .clickable { emoji = candidate }
+                    // Tapping the picked one again clears it, which is how you get
+                    // to the field below with nothing in the way.
+                    .clickable { emoji = if (on) "" else candidate }
             ) { Text(candidate, fontSize = 18.sp) }
+        }
+        Spacer(Modifier.height(10.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            InputField(
+                value = emoji,
+                placeholder = "🙂",
+                modifier = Modifier.width(96.dp)
+            ) { emoji = it.take(MAX_EMOJI_LENGTH) }
+            Spacer(Modifier.width(12.dp))
+            Text(
+                if (emoji.isBlank()) {
+                    "No icon, so notifications show the message on its own. " +
+                        "Type your own with the keyboard's emoji key."
+                } else {
+                    "Tap the picked icon again to clear it, or type your own here."
+                },
+                fontSize = 11.sp,
+                color = Mist,
+                lineHeight = 16.sp,
+                modifier = Modifier.weight(1f)
+            )
         }
 
         DayType.entries.forEach { type ->
@@ -593,38 +636,11 @@ private fun EditScreen(
                 )
             }
             Spacer(Modifier.height(8.dp))
-
-            // null stands for the trailing "add a time" button.
-            val slots: List<Int?> = times[type].orEmpty() + listOf(null)
-            WrapGrid(slots, perRow = 4) { minute ->
-                if (minute == null) {
-                    Text(
-                        "+ time",
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.SemiBold,
-                        color = Mist,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(9.dp))
-                            .border(1.dp, Edge, RoundedCornerShape(9.dp))
-                            .clickable { pickTime(type) }
-                            .padding(horizontal = 12.dp, vertical = 8.dp)
-                    )
-                } else {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(9.dp))
-                            .background(Slab)
-                            .border(1.dp, Edge, RoundedCornerShape(9.dp))
-                            .clickable { put(type, times[type].orEmpty().filterNot { it == minute }) }
-                            .padding(horizontal = 11.dp, vertical = 8.dp)
-                    ) {
-                        Text(hhmm(minute), fontSize = 13.sp, fontFamily = FontFamily.Monospace, color = Chalk)
-                        Spacer(Modifier.width(7.dp))
-                        Text("✕", fontSize = 11.sp, color = Mist)
-                    }
-                }
-            }
+            TimesEditor(
+                times = times[type].orEmpty(),
+                onAdd = { pickTime { picked -> put(type, times[type].orEmpty() + picked) } },
+                onRemove = { minute -> put(type, times[type].orEmpty().filterNot { it == minute }) }
+            )
 
             if (times[type].orEmpty().isEmpty()) {
                 Spacer(Modifier.height(6.dp))
@@ -635,6 +651,33 @@ private fun EditScreen(
                 )
             }
         }
+
+        Spacer(Modifier.height(22.dp))
+        Label("Specific days")
+        Spacer(Modifier.height(8.dp))
+        PatternPicker(
+            days = specific.days,
+            weeks = specific.weeks,
+            onDays = { specific = specific.copy(days = it) },
+            onWeeks = { specific = specific.copy(weeks = it) }
+        )
+        Spacer(Modifier.height(10.dp))
+        TimesEditor(
+            times = specific.times,
+            onAdd = {
+                pickTime { picked ->
+                    specific = specific.copy(times = (specific.times + picked).distinct().sorted())
+                }
+            },
+            onRemove = { minute -> specific = specific.copy(times = specific.times - minute) }
+        )
+        Spacer(Modifier.height(8.dp))
+        Text(
+            specificDaysHint(specific),
+            fontSize = 11.sp,
+            color = Mist,
+            lineHeight = 16.sp
+        )
 
         Spacer(Modifier.height(24.dp))
         Row(
@@ -693,10 +736,11 @@ private fun EditScreen(
                     onSave(
                         Reminder(
                             id = original?.id ?: "r${System.currentTimeMillis()}",
-                            emoji = emoji,
+                            emoji = emoji.trim(),
                             title = title.trim(),
                             active = active,
-                            times = times
+                            times = times,
+                            specific = specific
                         )
                     )
                 },
@@ -741,8 +785,14 @@ private fun Label(text: String) {
     )
 }
 
+/** One of a handful of choices, laid out across the full width. */
 @Composable
-private fun Segmented(selected: DayType, onSelect: (DayType) -> Unit) {
+private fun <T> Segmented(
+    options: List<T>,
+    selected: T,
+    label: (T) -> String,
+    onSelect: (T) -> Unit
+) {
     Row(
         Modifier
             .fillMaxWidth()
@@ -752,24 +802,129 @@ private fun Segmented(selected: DayType, onSelect: (DayType) -> Unit) {
             .padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        DayType.entries.forEach { type ->
-            val on = type == selected
+        options.forEach { option ->
+            val on = option == selected
             Box(
                 contentAlignment = Alignment.Center,
                 modifier = Modifier
                     .weight(1f)
                     .clip(RoundedCornerShape(9.dp))
                     .background(if (on) Chalk else Color.Transparent)
-                    .clickable { onSelect(type) }
+                    .clickable { onSelect(option) }
                     .padding(vertical = 9.dp)
             ) {
                 Text(
-                    type.label,
+                    label(option),
                     fontSize = 13.sp,
                     fontWeight = FontWeight.SemiBold,
                     color = if (on) Ink else Mist,
                     textAlign = TextAlign.Center
                 )
+            }
+        }
+    }
+}
+
+/**
+ * The seven weekdays as independent toggles, so a reminder can be pinned to any
+ * combination of them, with the even/odd week choice underneath.
+ */
+@Composable
+private fun PatternPicker(
+    days: Set<Int>,
+    weeks: Weeks,
+    onDays: (Set<Int>) -> Unit,
+    onWeeks: (Weeks) -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
+    ) {
+        (1..7).forEach { day ->
+            val on = day in days
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(if (on) Chalk else Slab)
+                    .border(1.dp, if (on) Chalk else Edge, RoundedCornerShape(9.dp))
+                    .clickable { onDays(if (on) days - day else days + day) }
+                    .padding(vertical = 10.dp)
+            ) {
+                Text(
+                    dayName(day),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (on) Ink else Mist,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
+                )
+            }
+        }
+    }
+
+    Spacer(Modifier.height(10.dp))
+    Segmented(Weeks.entries, weeks, { it.label }, onWeeks)
+}
+
+@Composable
+private fun InputField(
+    value: String,
+    placeholder: String,
+    modifier: Modifier = Modifier,
+    onValueChange: (String) -> Unit
+) {
+    OutlinedTextField(
+        value = value,
+        onValueChange = onValueChange,
+        placeholder = { Text(placeholder, color = Faded) },
+        singleLine = true,
+        shape = RoundedCornerShape(11.dp),
+        modifier = modifier,
+        colors = OutlinedTextFieldDefaults.colors(
+            focusedContainerColor = Slab,
+            unfocusedContainerColor = Slab,
+            focusedBorderColor = Amber,
+            unfocusedBorderColor = Edge,
+            focusedTextColor = Chalk,
+            unfocusedTextColor = Chalk,
+            cursorColor = Amber
+        )
+    )
+}
+
+/** The times of one section: a chip each, tap to drop, and a trailing button to add one. */
+@Composable
+private fun TimesEditor(times: List<Int>, onAdd: () -> Unit, onRemove: (Int) -> Unit) {
+    // null stands for the trailing "add a time" button.
+    val slots: List<Int?> = times + listOf(null)
+    WrapGrid(slots, perRow = 4) { minute ->
+        if (minute == null) {
+            Text(
+                "+ time",
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold,
+                color = Mist,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(9.dp))
+                    .border(1.dp, Edge, RoundedCornerShape(9.dp))
+                    .clickable(onClick = onAdd)
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            )
+        } else {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(9.dp))
+                    .background(Slab)
+                    .border(1.dp, Edge, RoundedCornerShape(9.dp))
+                    .clickable { onRemove(minute) }
+                    .padding(horizontal = 11.dp, vertical = 8.dp)
+            ) {
+                Text(hhmm(minute), fontSize = 13.sp, fontFamily = FontFamily.Monospace, color = Chalk)
+                Spacer(Modifier.width(7.dp))
+                Text("✕", fontSize = 11.sp, color = Mist)
             }
         }
     }

@@ -47,7 +47,7 @@ object Notifications {
 
         val notification = Notification.Builder(context, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_stat_reminder)
-            .setContentTitle("${reminder.emoji}  ${reminder.title}")
+            .setContentTitle(reminder.headline())
             .setCategory(Notification.CATEGORY_REMINDER)
             .setAutoCancel(true)
             .setShowWhen(true)

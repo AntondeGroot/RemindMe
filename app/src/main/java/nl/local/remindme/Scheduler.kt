@@ -19,7 +19,13 @@ object Scheduler {
 
     const val EXTRA_AT = "nl.local.remindme.AT"
     private const val REQUEST_CODE = 4711
-    private const val SEARCH_DAYS = 14L
+
+    /**
+     * How far ahead to look for the next due moment. A reminder on one weekday of even
+     * weeks only is normally 13 days out at worst, but the two odd weeks a 53-week year
+     * puts back to back can stretch that to 20, so search a comfortable four weeks.
+     */
+    private const val SEARCH_DAYS = 28L
 
     data class Fire(val at: LocalDateTime, val reminders: List<Reminder>)
 
@@ -56,12 +62,12 @@ object Scheduler {
         for (offset in 0..SEARCH_DAYS) {
             val date = from.toLocalDate().plusDays(offset)
             val type = config.dayTypeFor(date)
-            val minutes = active.flatMap { it.timesFor(type) }.distinct().sorted()
+            val minutes = active.flatMap { it.timesOn(date, type) }.distinct().sorted()
 
             for (minute in minutes) {
                 val at = date.atStartOfDay().plusMinutes(minute.toLong())
                 if (at.isAfter(from)) {
-                    val due = active.filter { minute in it.timesFor(type) }
+                    val due = active.filter { minute in it.timesOn(date, type) }
                     if (due.isNotEmpty()) return Fire(at, due)
                 }
             }
@@ -71,17 +77,18 @@ object Scheduler {
 
     /** Everything still to come today, for the status line in the app. */
     fun remainingToday(config: Config, now: LocalDateTime): List<Pair<Int, Reminder>> {
-        val type = config.dayTypeFor(now.toLocalDate())
+        val today = now.toLocalDate()
+        val type = config.dayTypeFor(today)
         val minuteNow = now.hour * 60 + now.minute
         return config.reminders
             .filter { it.active }
-            .flatMap { r -> r.timesFor(type).filter { it > minuteNow }.map { it to r } }
+            .flatMap { r -> r.timesOn(today, type).filter { it > minuteNow }.map { it to r } }
             .sortedBy { it.first }
     }
 
     fun scheduledFor(config: Config, date: LocalDate, minute: Int): List<Reminder> {
         val type = config.dayTypeFor(date)
-        return config.reminders.filter { it.active && minute in it.timesFor(type) }
+        return config.reminders.filter { it.active && minute in it.timesOn(date, type) }
     }
 
     private fun pendingIntent(context: Context, at: Long, mutable: Boolean): PendingIntent {
