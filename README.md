@@ -11,6 +11,18 @@ so "clean up 1 thing" can fire three times when you work from home and once on a
 office evening. A weekly pattern decides which type each weekday is by default, and
 you can override a single day from the main screen without disturbing that pattern.
 
+**Specific days** is the fourth kind of day, under Home, Office and Off in the editor,
+and the only one a reminder picks for itself: tick any combination of the seven
+weekdays, optionally narrowed to even or odd weeks — the ISO week number printed on
+the calendar, shown beside today's date on the main screen so you can see which one
+this is. Give that set its own times and they fire on those dates *on top of* whatever
+the day type already asks for — a time listed in both only fires once. The bins go out
+on Friday in even weeks; the plants get watered Tuesday and Saturday.
+
+Leave the days unticked — as everything ships — and the reminder just follows the
+home/office/off times all week. A reminder that should *only* fire on its specific
+days is one with those days set and the other three left empty.
+
 The reminders it ships with:
 
 | Reminder | Home | Office | Off |
@@ -59,7 +71,9 @@ before trusting it with the cat.
 
 Only one alarm is ever pending: the next moment something is due. When it fires,
 `AlarmReceiver` posts every reminder scheduled for that minute and books the next
-alarm. That sidesteps per-app alarm limits and copes with edits, reboots, clock
+alarm. Finding that moment means walking forward a day at a time for four weeks —
+long enough for "Monday, even weeks", which stretches to a 21-day gap over the new
+year of a 53-week ISO year. That sidesteps per-app alarm limits and copes with edits, reboots, clock
 changes and time-zone changes — `BootReceiver` rebuilds the chain after each.
 
 Alarms use `setExactAndAllowWhileIdle`, which fires on the minute even in doze. If
@@ -74,7 +88,7 @@ previous one rather than stacking nine of them up by evening.
 
 ```
 app/src/main/java/nl/local/remindme/
-  Model.kt          reminders, day types, the starting set
+  Model.kt          reminders, day types, specific days, the starting set
   Store.kt          JSON in SharedPreferences
   Scheduler.kt      works out what's next and sets the alarm
   AlarmReceiver.kt  fires, notifies, books the next one

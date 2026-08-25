@@ -51,6 +51,7 @@ object Store {
                 .put("emoji", r.emoji)
                 .put("title", r.title)
                 .put("active", r.active)
+                .put("specific", encodeSpecific(r.specific))
             DayType.entries.forEach { type ->
                 o.put(type.name, JSONArray().apply { r.timesFor(type).forEach { put(it) } })
             }
@@ -70,6 +71,26 @@ object Store {
             .toString()
     }
 
+    private fun encodeSpecific(specific: SpecificDays): JSONObject = JSONObject()
+        .put("days", JSONArray().apply { specific.days.sorted().forEach { put(it) } })
+        .put("weeks", specific.weeks.name)
+        .put("times", JSONArray().apply { specific.times.forEach { put(it) } })
+
+    /** Absent for reminders written before specific days existed, which simply have none. */
+    private fun decodeSpecific(o: JSONObject?): SpecificDays {
+        if (o == null) return SpecificDays()
+        return SpecificDays(
+            days = readInts(o.optJSONArray("days")).filter { it in 1..7 }.toSet(),
+            weeks = Weeks.from(o.optString("weeks")),
+            times = readInts(o.optJSONArray("times")).sorted()
+        )
+    }
+
+    private fun readInts(array: JSONArray?): List<Int> {
+        if (array == null) return emptyList()
+        return (0 until array.length()).map { array.getInt(it) }
+    }
+
     private fun decode(raw: String): Config {
         val root = JSONObject(raw)
 
@@ -86,7 +107,8 @@ object Store {
                 emoji = o.optString("emoji", "🔔"),
                 title = o.optString("title"),
                 active = o.optBoolean("active", true),
-                times = times
+                times = times,
+                specific = decodeSpecific(o.optJSONObject("specific"))
             )
         }
 
