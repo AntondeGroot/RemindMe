@@ -82,7 +82,10 @@ you find pings still slipping on a stubborn phone, swap it for `setAlarmClock` i
 permanent alarm icon in the status bar.
 
 Each reminder posts under a stable notification id, so a new water ping replaces the
-previous one rather than stacking nine of them up by evening.
+previous one rather than stacking nine of them up by evening. Only a reminder that fires
+again replaces its own notification, though, so the first ping of a new day clears out
+everything left standing from the days before it — a 21:00 litter nudge you slept through
+is no use at breakfast.
 
 ## Files worth knowing
 
