@@ -69,6 +69,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import java.time.DayOfWeek
 import java.time.LocalDate
 import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
 import java.util.Locale
 
@@ -240,6 +241,10 @@ private fun MainScreen(
 
         PermissionNotices(resumeTick)
 
+        VacationCard(config, today) { on ->
+            onCommit(if (on) config.startVacation(today) else config.endVacation())
+        }
+
         Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Label(
@@ -248,7 +253,7 @@ private fun MainScreen(
                         .lowercase(Locale.getDefault()) +
                         " · week ${isoWeek(today)}"
                 )
-                if (config.overrides.containsKey(today.toString())) {
+                if (!config.onVacation(today) && config.overrides.containsKey(today.toString())) {
                     Spacer(Modifier.width(10.dp))
                     Text(
                         "reset",
@@ -261,18 +266,33 @@ private fun MainScreen(
                 }
             }
             Spacer(Modifier.height(10.dp))
-            Segmented(DayType.entries, dayType, { it.label }) { picked ->
-                onCommit(config.copy(overrides = config.overrides + (today.toString() to picked)))
+            if (config.onVacation(today)) {
+                // Nothing to choose while away: vacation makes every day an off day.
+                Text(
+                    "An off day, like every day of the vacation.",
+                    fontSize = 12.sp,
+                    color = Mist
+                )
+            } else {
+                Segmented(DayType.entries, dayType, { it.label }) { picked ->
+                    onCommit(config.copy(overrides = config.overrides + (today.toString() to picked)))
+                }
+                Spacer(Modifier.height(8.dp))
+                Text("Decides which times fire today only.", fontSize = 12.sp, color = Mist)
             }
-            Spacer(Modifier.height(8.dp))
-            Text("Decides which times fire today only.", fontSize = 12.sp, color = Mist)
         }
 
         Column {
             Label("Reminders")
             Spacer(Modifier.height(10.dp))
             config.reminders.forEach { reminder ->
-                ReminderCard(reminder, dayType, today, minuteNow) { onEdit(reminder) }
+                ReminderCard(
+                    reminder = reminder,
+                    dayType = dayType,
+                    today = today,
+                    minuteNow = minuteNow,
+                    silencedByVacation = config.silencedByVacation(reminder, today)
+                ) { onEdit(reminder) }
                 Spacer(Modifier.height(8.dp))
             }
         }
@@ -303,16 +323,70 @@ private fun MainScreen(
     }
 }
 
+/**
+ * The one switch that changes everything: away from the usual routine, only the reminders
+ * kept on for it still fire, and every day counts as an off day.
+ */
+@Composable
+private fun VacationCard(config: Config, today: LocalDate, onVacation: (Boolean) -> Unit) {
+    val kept = config.reminders.count { it.active && it.duringVacation }
+    val on = config.onVacation(today)
+
+    Surface(
+        color = if (on) Color(0xFF241D10) else Slab,
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(1.dp, if (on) Color(0xFF4A3A1B) else Edge),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            Modifier.padding(start = 16.dp, end = 14.dp, top = 12.dp, bottom = 12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    "✈️  Vacation mode",
+                    fontSize = 15.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Chalk
+                )
+                Spacer(Modifier.height(3.dp))
+                Text(
+                    vacationSummary(if (on) config.vacationUntil else null, kept),
+                    fontSize = 12.sp,
+                    color = Mist,
+                    lineHeight = 17.sp
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            ToggleSwitch(checked = on, onCheckedChange = onVacation)
+        }
+    }
+}
+
+/** [until] is the day back, or null while vacation mode is off. */
+private fun vacationSummary(until: LocalDate?, kept: Int): String {
+    if (until == null) {
+        return "Silences every reminder except the ones you keep on for it, " +
+            "for ${Config.VACATION_DAYS / 7} weeks."
+    }
+    val back = "Switches itself off on ${until.format(DateTimeFormatter.ofPattern("EEE d MMM"))}."
+    if (kept == 0) return "Nothing fires until then. $back"
+    val plural = if (kept == 1) "reminder" else "reminders"
+    return "$kept $plural still firing, on off-day times. $back"
+}
+
 @Composable
 private fun ReminderCard(
     reminder: Reminder,
     dayType: DayType,
     today: LocalDate,
     minuteNow: Int,
+    silencedByVacation: Boolean,
     onClick: () -> Unit
 ) {
     val times = reminder.timesOn(today, dayType)
     val onSpecificDay = reminder.specific.covers(today)
+    val awake = reminder.active && !silencedByVacation
 
     Surface(
         color = Slab,
@@ -333,13 +407,16 @@ private fun ReminderCard(
                     reminder.title,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (reminder.active) Chalk else Mist,
+                    color = if (awake) Chalk else Mist,
                     modifier = Modifier.weight(1f)
                 )
             }
             Spacer(Modifier.height(10.dp))
             when {
                 !reminder.active -> Text("Paused", fontSize = 11.sp, color = Amber)
+
+                silencedByVacation ->
+                    Text("Sleeping through the vacation", fontSize = 11.sp, color = Amber)
 
                 times.isEmpty() -> Text(
                     "Silent on ${dayType.label.lowercase(Locale.getDefault())} days",
@@ -364,7 +441,7 @@ private fun ReminderCard(
             }
 
             // The times above are one day's worth; this says which days differ.
-            if (reminder.active && reminder.specific.isSet()) {
+            if (awake && reminder.specific.isSet()) {
                 Spacer(Modifier.height(8.dp))
                 Text(
                     (if (onSpecificDay) "Includes the extra times for " else "Extra times on ") +
@@ -528,6 +605,16 @@ private fun specificDaysHint(specific: SpecificDays): String {
         "This week is week ${isoWeek(LocalDate.now())}."
 }
 
+/** What the vacation switch means for this reminder as it currently stands. */
+private fun vacationHint(duringVacation: Boolean, offTimes: List<Int>): String {
+    if (!duringVacation) return "Vacation mode silences this one."
+    if (offTimes.isEmpty()) {
+        return "A vacation day is an off day, and there are no off-day times — " +
+            "add one above or this stays silent anyway."
+    }
+    return "Vacation mode keeps this one, on its off-day times."
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EditScreen(
@@ -540,6 +627,7 @@ private fun EditScreen(
     var title by remember { mutableStateOf(original?.title ?: "") }
     var emoji by remember { mutableStateOf(original?.emoji ?: "💧") }
     var active by remember { mutableStateOf(original?.active ?: true) }
+    var duringVacation by remember { mutableStateOf(original?.duringVacation ?: false) }
     var specific by remember { mutableStateOf(original?.specific ?: SpecificDays()) }
     var times by remember {
         mutableStateOf(DayType.entries.associateWith { original?.timesFor(it).orEmpty() })
@@ -680,28 +768,24 @@ private fun EditScreen(
         )
 
         Spacer(Modifier.height(24.dp))
-        Row(
-            Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                if (active) "Active" else "Paused",
-                fontSize = 14.sp,
-                fontWeight = FontWeight.SemiBold,
-                color = Chalk
-            )
-            Switch(
-                checked = active,
-                onCheckedChange = { active = it },
-                colors = SwitchDefaults.colors(
-                    checkedThumbColor = Ink,
-                    checkedTrackColor = Amber,
-                    uncheckedTrackColor = Slab,
-                    uncheckedBorderColor = Edge
-                )
-            )
-        }
+        ToggleRow(
+            title = if (active) "Active" else "Paused",
+            caption = if (active) {
+                "Firing on the times above."
+            } else {
+                "Kept, but silent until you switch it back on."
+            },
+            checked = active,
+            onCheckedChange = { active = it }
+        )
+
+        Spacer(Modifier.height(18.dp))
+        ToggleRow(
+            title = "Ask on vacation too",
+            caption = vacationHint(duringVacation, times[DayType.OFF].orEmpty()),
+            checked = duringVacation,
+            onCheckedChange = { duringVacation = it }
+        )
 
         Spacer(Modifier.height(16.dp))
         OutlinedButton(
@@ -739,6 +823,7 @@ private fun EditScreen(
                             emoji = emoji.trim(),
                             title = title.trim(),
                             active = active,
+                            duringVacation = duringVacation,
                             times = times,
                             specific = specific
                         )
@@ -771,6 +856,43 @@ private fun Header(title: String, onBack: () -> Unit) {
         )
         Spacer(Modifier.width(4.dp))
         Text(title, fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Chalk)
+    }
+}
+
+@Composable
+private fun ToggleSwitch(checked: Boolean, onCheckedChange: (Boolean) -> Unit) {
+    Switch(
+        checked = checked,
+        onCheckedChange = onCheckedChange,
+        colors = SwitchDefaults.colors(
+            checkedThumbColor = Ink,
+            checkedTrackColor = Amber,
+            uncheckedTrackColor = Slab,
+            uncheckedBorderColor = Edge
+        )
+    )
+}
+
+/** A switch with its heading, and a line underneath saying what it means right now. */
+@Composable
+private fun ToggleRow(
+    title: String,
+    caption: String,
+    checked: Boolean,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(title, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = Chalk)
+            Spacer(Modifier.height(3.dp))
+            Text(caption, fontSize = 11.sp, color = Mist, lineHeight = 16.sp)
+        }
+        Spacer(Modifier.width(12.dp))
+        ToggleSwitch(checked = checked, onCheckedChange = onCheckedChange)
     }
 }
 

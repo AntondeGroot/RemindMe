@@ -50,6 +50,7 @@ object Store {
                 .put("emoji", r.emoji)
                 .put("title", r.title)
                 .put("active", r.active)
+                .put("duringVacation", r.duringVacation)
                 .put("specific", encodeSpecific(r.specific))
             DayType.entries.forEach { type ->
                 o.put(type.name, JSONArray().apply { r.timesFor(type).forEach { put(it) } })
@@ -67,6 +68,8 @@ object Store {
             .put("reminders", reminders)
             .put("week", week)
             .put("overrides", overrides)
+            // A null value leaves the key out altogether.
+            .put("vacationUntil", config.vacationUntil?.toString())
             .toString()
     }
 
@@ -106,6 +109,8 @@ object Store {
                 emoji = o.optString("emoji", "🔔"),
                 title = o.optString("title"),
                 active = o.optBoolean("active", true),
+                // Absent for reminders written before vacation mode existed: those stay quiet.
+                duringVacation = o.optBoolean("duringVacation", false),
                 times = times,
                 specific = decodeSpecific(o.optJSONObject("specific"))
             )
@@ -124,7 +129,9 @@ object Store {
         return Config(
             reminders = reminders,
             week = week.ifEmpty { Defaults.config.week },
-            overrides = overrides
+            overrides = overrides,
+            vacationUntil = root.optString("vacationUntil").takeIf { it.isNotEmpty() }
+                ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }
         )
     }
 }

@@ -23,6 +23,20 @@ Leave the days unticked — as everything ships — and the reminder just follow
 home/office/off times all week. A reminder that should *only* fire on its specific
 days is one with those days set and the other three left empty.
 
+**Vacation mode** is the switch on the main screen for when none of that applies.
+While it's on, every day counts as an off day — the usual week and any one-off day type
+you'd set are left alone but not consulted — and a reminder only fires if you've ticked
+**Ask on vacation too** in its editor. Everything else goes quiet until you switch it back —
+or for two weeks, whichever comes first: it switches itself off after 14 days, so the
+routine comes back even if you forget. Back early or away longer? Flip it off, or off and on
+again for a fresh two weeks.
+
+Most things don't survive the trip: *clean up 1 thing* is nonsense in a hotel room, and
+nobody needs nine water pings on a beach. Only *did you register all your meals?* ships
+with the tick, and it fires on its off-day times, which is what an off day is for. Anything
+you add starts unticked. A reminder you tick but leave with no off-day times has nothing to
+fire, and the editor says so under the switch.
+
 The reminders it ships with:
 
 | Reminder | Home | Office | Off |
@@ -31,6 +45,8 @@ The reminders it ships with:
 | 🧺 Clean up 1 thing | 11:00, 15:00, 19:30 | 19:30 | 11:00, 16:00 |
 | 📓 Did you register all your meals? | 09:30, 13:30, 16:30, 20:00 | same | 10:00, 14:00, 17:00, 20:30 |
 | 💧 Drink a glass of water | 08:00 → 20:30, nine times | same | seven times, spread wider |
+
+Only the meals one is ticked for vacation.
 
 Default week: Mon/Wed/Fri home, Tue/Thu office, weekend off.
 
@@ -71,7 +87,10 @@ before trusting it with the cat.
 
 Only one alarm is ever pending: the next moment something is due. When it fires,
 `AlarmReceiver` posts every reminder scheduled for that minute and books the next
-alarm. Finding that moment means walking forward a day at a time for four weeks —
+alarm. Every part of that asks `Config.firing(date)` which reminders count that day, and
+vacation mode is stored as the date you're back rather than a flag, so switching it on
+re-books the chain around whatever is left and the walk picks everything up again on
+the day it runs out — no extra alarm needed to switch it off. Finding that moment means walking forward a day at a time for four weeks —
 long enough for "Monday, even weeks", which stretches to a 21-day gap over the new
 year of a 53-week ISO year. That sidesteps per-app alarm limits and copes with edits, reboots, clock
 changes and time-zone changes — `BootReceiver` rebuilds the chain after each.
@@ -91,7 +110,7 @@ is no use at breakfast.
 
 ```
 app/src/main/java/nl/local/remindme/
-  Model.kt          reminders, day types, specific days, the starting set
+  Model.kt          reminders, day types, specific days, vacation mode, the starting set
   Store.kt          JSON in SharedPreferences
   Scheduler.kt      works out what's next and sets the alarm
   AlarmReceiver.kt  fires, notifies, books the next one

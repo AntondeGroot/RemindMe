@@ -67,6 +67,8 @@ data class Reminder(
     val emoji: String,
     val title: String,
     val active: Boolean = true,
+    /** Whether this one still fires while vacation mode is on. Off for all but a few. */
+    val duringVacation: Boolean = false,
     val times: Map<DayType, List<Int>> = emptyMap(),
     val specific: SpecificDays = SpecificDays()
 ) {
@@ -87,10 +89,43 @@ data class Config(
     /** java.time DayOfWeek value (1 = Monday .. 7 = Sunday) -> the usual day type. */
     val week: Map<Int, DayType>,
     /** ISO date -> a one-off day type for that date only. */
-    val overrides: Map<String, DayType> = emptyMap()
+    val overrides: Map<String, DayType> = emptyMap(),
+    /**
+     * The day you're back: vacation mode covers every date before it. Stored as an end
+     * rather than an on/off flag so it lapses by itself — nobody remembers to switch it
+     * off the first morning home. Stays behind once past, harmlessly.
+     */
+    val vacationUntil: LocalDate? = null
 ) {
-    fun dayTypeFor(date: LocalDate): DayType =
-        overrides[date.toString()] ?: week[date.dayOfWeek.value] ?: DayType.HOME
+    fun onVacation(date: LocalDate): Boolean = vacationUntil?.let { date < it } ?: false
+
+    /** Vacation mode switched on today, running out [VACATION_DAYS] from now. */
+    fun startVacation(today: LocalDate): Config =
+        copy(vacationUntil = today.plusDays(VACATION_DAYS))
+
+    fun endVacation(): Config = copy(vacationUntil = null)
+
+    /**
+     * On vacation there is no working week left to follow, so every day is an off day
+     * and the usual pattern and one-off overrides are simply not consulted.
+     */
+    fun dayTypeFor(date: LocalDate): DayType {
+        if (onVacation(date)) return DayType.OFF
+        return overrides[date.toString()] ?: week[date.dayOfWeek.value] ?: DayType.HOME
+    }
+
+    /** The reminders allowed to fire on [date]: active, and awake on vacation. */
+    fun firing(date: LocalDate): List<Reminder> =
+        reminders.filter { it.active && (!onVacation(date) || it.duringVacation) }
+
+    /** Whether vacation mode, rather than the reminder's own switch, is keeping it quiet. */
+    fun silencedByVacation(reminder: Reminder, date: LocalDate): Boolean =
+        onVacation(date) && !reminder.duringVacation
+
+    companion object {
+        /** Two weeks covers most trips; switching it on again starts a fresh two. */
+        const val VACATION_DAYS = 14L
+    }
 }
 
 fun hhmm(minuteOfDay: Int): String = "%02d:%02d".format(minuteOfDay / 60, minuteOfDay % 60)
@@ -146,6 +181,7 @@ object Defaults {
                 id = "meals",
                 emoji = "📓",
                 title = "Did you register all your meals?",
+                duringVacation = true,
                 times = mapOf(
                     DayType.HOME to listOf(t(9, 30), t(13, 30), t(16, 30), t(20)),
                     DayType.OFFICE to listOf(t(9, 30), t(13, 30), t(16, 30), t(20)),
