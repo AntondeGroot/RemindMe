@@ -24,6 +24,7 @@ object Scheduler {
      * How far ahead to look for the next due moment. A reminder on one weekday of even
      * weeks only is normally 13 days out at worst, but the two odd weeks a 53-week year
      * puts back to back can stretch that to 20, so search a comfortable four weeks.
+     * That also reaches past the end of a vacation ([Config.VACATION_DAYS]).
      */
     private const val SEARCH_DAYS = 28L
 
@@ -56,12 +57,14 @@ object Scheduler {
 
     /** The next moment at or after [from] when at least one reminder is due. */
     fun nextFire(config: Config, from: LocalDateTime): Fire? {
-        val active = config.reminders.filter { it.active }
-        if (active.isEmpty()) return null
+        // Vacation can silence everything for a while, but only until it runs out, and
+        // that's inside the search window — so this walk books the first alarm after it.
+        if (config.reminders.none { it.active }) return null
 
         for (offset in 0..SEARCH_DAYS) {
             val date = from.toLocalDate().plusDays(offset)
             val type = config.dayTypeFor(date)
+            val active = config.firing(date)
             val minutes = active.flatMap { it.timesOn(date, type) }.distinct().sorted()
 
             for (minute in minutes) {
@@ -80,15 +83,14 @@ object Scheduler {
         val today = now.toLocalDate()
         val type = config.dayTypeFor(today)
         val minuteNow = now.hour * 60 + now.minute
-        return config.reminders
-            .filter { it.active }
+        return config.firing(today)
             .flatMap { r -> r.timesOn(today, type).filter { it > minuteNow }.map { it to r } }
             .sortedBy { it.first }
     }
 
     fun scheduledFor(config: Config, date: LocalDate, minute: Int): List<Reminder> {
         val type = config.dayTypeFor(date)
-        return config.reminders.filter { it.active && minute in it.timesOn(date, type) }
+        return config.firing(date).filter { minute in it.timesOn(date, type) }
     }
 
     private fun pendingIntent(context: Context, at: Long, mutable: Boolean): PendingIntent {
