@@ -363,13 +363,13 @@ private fun VacationCard(config: Config, today: LocalDate, onVacation: (Boolean)
     }
 }
 
-/** [until] is the day back, or null while vacation mode is off. */
+/** [until] is the last day of vacation, or null while vacation mode is off. */
 private fun vacationSummary(until: LocalDate?, kept: Int): String {
     if (until == null) {
         return "Silences every reminder except the ones you keep on for it, " +
             "for ${Config.VACATION_DAYS / 7} weeks."
     }
-    val back = "Switches itself off on ${until.format(DateTimeFormatter.ofPattern("EEE d MMM"))}."
+    val back = "Lasts through ${until.format(DateTimeFormatter.ofPattern("EEE d MMM"))}."
     if (kept == 0) return "Nothing fires until then. $back"
     val plural = if (kept == 1) "reminder" else "reminders"
     return "$kept $plural still firing, on off-day times. $back"

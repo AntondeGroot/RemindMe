@@ -55,7 +55,7 @@ object Scheduler {
         }
     }
 
-    /** The next moment at or after [from] when at least one reminder is due. */
+    /** The next moment strictly after [from] when at least one reminder is due. */
     fun nextFire(config: Config, from: LocalDateTime): Fire? {
         // Vacation can silence everything for a while, but only until it runs out, and
         // that's inside the search window — so this walk books the first alarm after it.
