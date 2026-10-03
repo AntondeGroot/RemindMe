@@ -91,17 +91,18 @@ data class Config(
     /** ISO date -> a one-off day type for that date only. */
     val overrides: Map<String, DayType> = emptyMap(),
     /**
-     * The day you're back: vacation mode covers every date before it. Stored as an end
-     * rather than an on/off flag so it lapses by itself — nobody remembers to switch it
-     * off the first morning home. Stays behind once past, harmlessly.
+     * The last day of vacation, inclusive: the day you're back is spent travelling, not on
+     * chores, so it still counts. Stored as an end rather than an on/off flag so it lapses
+     * by itself — nobody remembers to switch it off the first morning home. Stays behind
+     * once past, harmlessly.
      */
     val vacationUntil: LocalDate? = null
 ) {
-    fun onVacation(date: LocalDate): Boolean = vacationUntil?.let { date < it } ?: false
+    fun onVacation(date: LocalDate): Boolean = vacationUntil?.let { date <= it } ?: false
 
-    /** Vacation mode switched on today, running out [VACATION_DAYS] from now. */
+    /** Vacation mode switched on today, lasting [VACATION_DAYS] days counting today. */
     fun startVacation(today: LocalDate): Config =
-        copy(vacationUntil = today.plusDays(VACATION_DAYS))
+        copy(vacationUntil = today.plusDays(VACATION_DAYS - 1))
 
     fun endVacation(): Config = copy(vacationUntil = null)
 
