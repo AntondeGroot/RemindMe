@@ -7,6 +7,12 @@
     {
       "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
       "automerge": true
+    },
+    {
+      "description": "AGP only works with the Gradle versions it was built for, so bump them in one PR.",
+      "matchPackageNames": ["gradle", "com.android.application"],
+      "matchUpdateTypes": ["major"],
+      "groupName": "Android Gradle Plugin and Gradle"
     }
   ]
 }
